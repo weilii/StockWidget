@@ -1,0 +1,17 @@
+.build/
+.swiftpm/
+dist/
+output/
+.DS_Store
+__pycache__/
+*.py[cod]
+
+# Local state, credentials and development notes
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+state.json
+docs/product-spec.md
+docs/validation.md
