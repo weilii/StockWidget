@@ -1,14 +1,22 @@
+import CFNetwork
+import Darwin
 import Foundation
+import Network
 
 public actor HTTPClient {
     private let session: URLSession
+    private var okxProxySession: (type: String, endpoint: NWEndpoint, session: URLSession)?
     private var nextRequest: [String: Date] = [:]
     public init() {
+        session = URLSession(configuration: Self.configuration())
+    }
+
+    private static func configuration() -> URLSessionConfiguration {
         let config = URLSessionConfiguration.ephemeral
         config.timeoutIntervalForRequest = 12; config.timeoutIntervalForResource = 20
         config.httpMaximumConnectionsPerHost = 3
         config.httpAdditionalHeaders = ["User-Agent": "StockWidget/0.1 (macOS; personal market monitor)", "Accept": "application/json,text/plain,*/*"]
-        session = URLSession(configuration: config)
+        return config
     }
     public func get(_ raw: String, query: [String: String] = [:], referer: String? = nil) async throws -> Data {
         guard var c = URLComponents(string: raw) else { throw FeedError.invalid("URL") }
@@ -20,13 +28,81 @@ public actor HTTPClient {
         let delay = slot.timeIntervalSince(now)
         if delay > 0 { try await Task.sleep(nanoseconds: UInt64(delay * 1_000_000_000)) }
         try Task.checkCancellation()
+        let requestSession = host == "www.okx.com" ? try await sessionForOKX(url) : session
         var request = URLRequest(url: url)
         request.setValue("no-cache", forHTTPHeaderField: "Cache-Control")
         if let referer { request.setValue(referer, forHTTPHeaderField: "Referer") }
-        let (data, response) = try await session.data(for: request)
+        let (data, response) = try await requestSession.data(for: request)
         guard let response = response as? HTTPURLResponse else { throw FeedError.invalid("HTTP response") }
         guard (200..<300).contains(response.statusCode) else { throw FeedError.http(response.statusCode) }
         return data
+    }
+    private func sessionForOKX(_ url: URL) async throws -> URLSession {
+        let settings = CFNetworkCopySystemProxySettings()?.takeRetainedValue()
+        let proxies = settings.map {
+            CFNetworkCopyProxiesForURL(url as CFURL, $0).takeRetainedValue() as? [[String: Any]]
+        } ?? nil
+
+        if let proxy = proxies?.first, let type = proxy[kCFProxyTypeKey as String] as? String,
+           type != kCFProxyTypeNone as String {
+            // Leave PAC and other system-managed proxy configurations to URLSession.
+            guard [kCFProxyTypeHTTP as String, kCFProxyTypeHTTPS as String, kCFProxyTypeSOCKS as String].contains(type),
+                  let host = proxy[kCFProxyHostNameKey as String] as? String,
+                  let port = proxy[kCFProxyPortNumberKey as String] as? UInt16,
+                  let endpointPort = NWEndpoint.Port(rawValue: port) else { return session }
+            let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(host), port: endpointPort)
+            if let cached = okxProxySession, cached.type == type, cached.endpoint == endpoint {
+                return cached.session
+            }
+            let config = Self.configuration()
+            var route = type == kCFProxyTypeSOCKS as String
+                ? ProxyConfiguration(socksv5Proxy: endpoint)
+                : ProxyConfiguration(httpCONNECTProxy: endpoint)
+            route.allowFailover = false
+            config.proxyConfigurations = [route]
+            let proxiedSession = URLSession(configuration: config)
+            okxProxySession?.session.finishTasksAndInvalidate()
+            okxProxySession = (type, endpoint, proxiedSession)
+            return proxiedSession
+        }
+
+        // A blocked OKX hostname can resolve to a link-local placeholder.
+        let resolvesToLinkLocal = await Task.detached {
+            Self.hasLinkLocalAddress("www.okx.com")
+        }.value
+        try Task.checkCancellation()
+        if resolvesToLinkLocal { throw URLError(.cannotConnectToHost) }
+        return session
+    }
+
+    private static func hasLinkLocalAddress(_ host: String) -> Bool {
+        var hints = addrinfo()
+        hints.ai_socktype = SOCK_STREAM
+        var results: UnsafeMutablePointer<addrinfo>?
+        guard getaddrinfo(host, nil, &hints, &results) == 0, let results else { return false }
+        defer { freeaddrinfo(results) }
+
+        var current: UnsafeMutablePointer<addrinfo>? = results
+        while let entry = current?.pointee {
+            if let address = entry.ai_addr {
+                switch entry.ai_family {
+                case AF_INET:
+                    let ip = address.withMemoryRebound(to: sockaddr_in.self, capacity: 1) {
+                        UInt32(bigEndian: $0.pointee.sin_addr.s_addr)
+                    }
+                    if ip >> 16 == 0xa9fe { return true }
+                case AF_INET6:
+                    let ip = address.withMemoryRebound(to: sockaddr_in6.self, capacity: 1) {
+                        $0.pointee.sin6_addr.__u6_addr.__u6_addr8
+                    }
+                    if ip.0 == 0xfe && ip.1 & 0xc0 == 0x80 { return true }
+                default:
+                    break
+                }
+            }
+            current = entry.ai_next
+        }
+        return false
     }
 }
 
