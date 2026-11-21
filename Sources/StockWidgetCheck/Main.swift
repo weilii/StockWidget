@@ -26,6 +26,19 @@ struct Checks {
         try expect(Asset(market: .hk, symbol: "01879", name: "曦智科技p").displayName == "曦智科技-P", "HK suffix casing should display consistently")
         try expect(Asset(market: .us, symbol: "SNAP", name: "Snap").displayName == "Snap", "English company names must not be rewritten as listing suffixes")
         let now = FeedParsing.isoDate("2026-11-19T04:00:00Z")!
+        let goldService = MarketService()
+        let goldResults = try await goldService.search("黄金价格", market: nil, cryptoSource: .automatic)
+        let goldCodeResults = try await goldService.search("xau/usd", market: .metals, cryptoSource: .automatic)
+        try expect(goldResults.count == 1 && goldResults == goldCodeResults, "Gold aliases should resolve to the same spot instrument")
+        let gold = goldResults[0]
+        let goldQuote = try FeedParsing.spotGold(json("""
+        {"symbol":"XAU","currency":"USD","price":3590.46,"updatedAt":"2026-11-19T04:00:00.000Z"}
+        """), asset: gold)
+        try expect(gold.priceUnit == "USD/oz" && goldQuote.price == 3590.46 && goldQuote.quotedAt == now, "Spot gold price, unit and provider timestamp")
+        if CommandLine.arguments.contains("--live-gold") {
+            let quote = try await goldService.quote(for: gold, crypto: .automatic)
+            print("\(quote.pair) \(quote.price) \(gold.priceUnit) · \(quote.quotedAt!)")
+        }
         var f = Array(repeating: "", count: 35)
         f[1] = "茅台"; f[3] = "1450.99"; f[4] = "1442.66"; f[5] = "1442"; f[30] = "20261119120000"; f[33] = "1459.74"; f[34] = "1432.10"
         let cq = try FeedParsing.tencentQuote(json("v_sh600519=\"" + f.joined(separator: "~") + "\";"), asset: cn, now: now)
@@ -169,6 +182,19 @@ struct Checks {
         print("PASS: index/stock identity, backward-compatible assets, drag-versus-click, screen/widget snapping and spring response")
         print("PASS: Nasdaq Composite aliases, Nasdaq-100 distinction, index quote identity and points")
         print("PASS: OKX spot catalog, pair/type validation, 24h reference, USDT, history and source selection")
+
+        if CommandLine.arguments.contains("--live-gold-tokens") {
+            let service = MarketService()
+            for (query, symbol, source) in [("泰达黄金", "XAUT", CryptoSource.okx), ("PAX Gold", "PAXG", .coinbase)] {
+                let results = try await service.search(query, market: nil, cryptoSource: source)
+                guard let asset = results.first(where: { $0.market == .crypto && $0.symbol == symbol }) else {
+                    throw CheckFailure.failed("Gold token search failed: \(query)")
+                }
+                let quote = try await service.quote(for: asset, crypto: source, forceChart: true)
+                try expect(quote.percent != nil && quote.points.count > 1 && quote.chartError == nil, "Gold token should have 24h change and history: \(symbol)")
+                print("PASS LIVE GOLD TOKEN: \(quote.pair) · \(quote.percent!)% · \(quote.points.count) points")
+            }
+        }
 
         if CommandLine.arguments.contains("--live-okb") {
             let service = MarketService()

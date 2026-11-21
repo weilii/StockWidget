@@ -26,7 +26,7 @@ final class AppStore: ObservableObject {
     @Published var storageError: String?
     @Published var connectionResults: [ConnectionResult] = []
     @Published var isDiagnosing = false
-    @Published var lastRefresh: Date?
+    var lastRefresh: Date? { quotes.values.map(\.fetchedAt).max() }
     var draggedAsset: String?
     var onPreferencesChanged: (() -> Void)?
     var onWatchlistChanged: (() -> Void)?
@@ -154,7 +154,6 @@ final class AppStore: ObservableObject {
                 if let asset = iterator.next() { submit(asset) }
             }
         }
-        lastRefresh = Date()
     }
     func refreshNow() { Task { await refresh(force: true); restartLoop() } }
     func diagnose() {
@@ -201,6 +200,7 @@ private let translations: [String: String] = [
     "No chart data": "暂无走势数据", "Quote unavailable": "暂无行情", "Refresh to try again. Previous data stays visible when a feed fails.": "刷新以重试。数据源失败时会保留之前的行情。",
     "Quote age exceeds 5 minutes during expected trading hours.": "在预计交易时段内，报价已超过 5 分钟。",
     "Hours are a weekday estimate, not an exchange holiday calendar.": "时段按工作日估计，未包含完整交易所节假日日历。",
+    "Precious metal": "贵金属", "Metals": "贵金属", "Spot Gold": "现货黄金", "Last updated": "最后更新",
     "Show Watchlist": "显示自选行情", "Hide Watchlist": "隐藏自选行情", "Quit StockWidget": "退出 StockWidget", "Saved data issue": "本地数据问题",
     "Unavailable": "不可用", "Unknown": "未知", "Last checked": "最近检查", "Source changed": "数据源已切换"
 ]

@@ -41,11 +41,19 @@ public struct ConnectionResult: Identifiable, Sendable {
 public actor MarketService {
     private let http = HTTPClient()
     private var cryptoCatalogs: [CryptoSource: (Date, [Asset])] = [:]
-    private var currencyNames: [String: String] = ["BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "DOGE": "Dogecoin", "XRP": "XRP", "ADA": "Cardano", "BNB": "BNB", "OKB": "OKB"]
-    private let cryptoAliases: [String: [String]] = ["BTC": ["比特币"], "ETH": ["以太坊", "以太币"], "SOL": ["索拉纳"], "DOGE": ["狗狗币"], "ADA": ["艾达币"], "XRP": ["瑞波币"], "OKB": ["OKX", "欧易", "欧易币"]]
+    private var currencyNames: [String: String] = ["BTC": "Bitcoin", "ETH": "Ethereum", "SOL": "Solana", "DOGE": "Dogecoin", "XRP": "XRP", "ADA": "Cardano", "BNB": "BNB", "OKB": "OKB", "XAUT": "Tether Gold", "PAXG": "PAX Gold"]
+    private let cryptoAliases: [String: [String]] = ["BTC": ["比特币"], "ETH": ["以太坊", "以太币"], "SOL": ["索拉纳"], "DOGE": ["狗狗币"], "ADA": ["艾达币"], "XRP": ["瑞波币"], "OKB": ["OKX", "欧易", "欧易币"], "XAUT": ["泰达黄金", "泰达金", "Tether Gold"], "PAXG": ["PAX Gold"]]
+    private static let goldTokenSymbols = ["XAUT", "PAXG"]
+    private static let spotGold = Asset(market: .metals, symbol: "XAU/USD", name: "Spot Gold", lookup: "XAU", kind: .metal)
+    private static let goldAliases = ["黄金", "黄金价格", "现货黄金", "伦敦金", "国际金价", "金价", "GOLD", "GOLDPRICE", "SPOTGOLD", "XAU", "XAUUSD"]
+
     public init() {}
 
     public func quote(for asset: Asset, crypto: CryptoSource, previous: Quote? = nil, forceChart: Bool = false) async throws -> Quote {
+        if asset.market == .metals {
+            let data = try await http.get("https://api.gold-api.com/price/\(asset.lookup)")
+            return try FeedParsing.spotGold(data, asset: asset)
+        }
         if asset.market == .us {
             // The Composite's 5m feed can omit most of a session. Its 1m
             // series retains the available intraday samples without filling gaps.
@@ -157,6 +165,11 @@ public actor MarketService {
         guard !query.isEmpty else { return [] }
         try Task.checkCancellation()
         if market == .crypto { return try await cryptoSearch(query, source: cryptoSource) }
+        if market == nil || market == .metals {
+            let key = query.uppercased().filter { !$0.isWhitespace && $0 != "/" && $0 != "-" }
+            if Self.goldAliases.contains(key) { return [Self.spotGold] }
+            if market == .metals { return [] }
+        }
         let includesUS = market == nil || market == .us
         // Known names/codes, including Google's .IXIC notation, resolve even
         // when an overseas product catalog or the search endpoint is offline.
@@ -165,6 +178,11 @@ public actor MarketService {
         let q = query.uppercased()
         let qualifiedChinaCode = q.range(of: "^(SH|SZ)[0-9]{6}$", options: .regularExpression) != nil ? q.lowercased() : nil
         let stockQuery = qualifiedChinaCode == nil ? query : String(query.dropFirst(2))
+        if market == nil, Self.goldTokenSymbols.contains(where: { symbol in
+            q == symbol || (cryptoAliases[symbol] ?? []).contains { $0.caseInsensitiveCompare(query) == .orderedSame }
+        }) {
+            return try await cryptoSearch(query, source: cryptoSource)
+        }
         var stocks = indices
         var stockError: Error?
         do {

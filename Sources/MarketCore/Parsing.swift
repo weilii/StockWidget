@@ -2,6 +2,24 @@ import Foundation
 import CoreFoundation
 
 public enum FeedParsing {
+    public static func spotGold(_ data: Data, asset: Asset) throws -> Quote {
+        struct SpotResponse: Decodable {
+            let symbol: String
+            let currency: String
+            let price: Double
+            let updatedAt: String
+        }
+
+        let response = try JSONDecoder().decode(SpotResponse.self, from: data)
+        guard response.symbol == asset.lookup, response.currency == "USD",
+              response.price.isFinite, response.price > 0, let updatedAt = isoDate(response.updatedAt) else {
+            throw FeedError.invalid("Spot gold quote")
+        }
+        return Quote(assetID: asset.id, price: response.price, reference: nil, open: nil,
+                     high: nil, low: nil, currency: "USD", source: "Gold API",
+                     pair: asset.symbol, quotedAt: updatedAt)
+    }
+
     public static func object(_ data: Data) throws -> [String: Any] {
         guard let value = try JSONSerialization.jsonObject(with: data) as? [String: Any] else { throw FeedError.invalid("JSON object") }
         return value
