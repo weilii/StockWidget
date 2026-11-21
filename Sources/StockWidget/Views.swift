@@ -10,8 +10,9 @@ enum CompactLayout {
     static let width: CGFloat = 360
     static let minimumWidth: CGFloat = 320
     static let rowHeight: CGFloat = 44
+    static let footerHeight: CGFloat = 22
     static func height(for count: Int) -> CGFloat {
-        count == 0 ? 128 : CGFloat(min(max(count, 1), 10)) * rowHeight + 12
+        (count == 0 ? 128 : CGFloat(count) * rowHeight + 12) + footerHeight
     }
 }
 
@@ -33,8 +34,15 @@ struct WatchlistView: View {
                                 .onDrop(of: [UTType.text], delegate: SymbolDropDelegate(asset: asset, store: store))
                         }
                     }.padding(.horizontal, 6).padding(.vertical, 6)
-                }.scrollIndicators(.hidden)
+                }.scrollIndicators(.automatic)
             }
+            Text(store.t("Last updated") + "  " + (store.lastRefresh?.formatted(date: .numeric, time: .shortened) ?? "—"))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .trailing)
+                .padding(.trailing, 14)
+                .frame(height: CompactLayout.footerHeight)
         }
         .background(Color(nsColor: .windowBackgroundColor))
         .ignoresSafeArea()
@@ -74,7 +82,7 @@ struct QuoteRow: View {
             ZStack {
             HStack(spacing: 10) {
                 VStack(alignment: .leading, spacing: 3) {
-                    TickerTypography.text(asset.displayName, size: 12, bold: true).lineLimit(1).truncationMode(.tail)
+                    TickerTypography.text(store.t(asset.displayName), size: 12, bold: true).lineLimit(1).truncationMode(.tail)
                     Text(displaySymbol).font(TickerTypography.font(10)).foregroundStyle(.secondary).lineLimit(1)
                 }.frame(width: 104, alignment: .leading)
                 Sparkline(points: quote?.points ?? [], reference: quote?.reference, color: quoteColor(quote, redUp: store.preferences.redUp), filled: false)
@@ -92,7 +100,7 @@ struct QuoteRow: View {
                             .foregroundStyle(quoteColor(quote, redUp: store.preferences.redUp))
                     }
                     HStack(spacing: 4) {
-                        Text(quote?.currency ?? asset.priceUnit).font(TickerTypography.font(7.5)).foregroundStyle(.tertiary)
+                        Text(asset.market == .metals ? asset.priceUnit : (quote?.currency ?? asset.priceUnit)).font(TickerTypography.font(7.5)).foregroundStyle(.tertiary)
                         Text(quote.map { priceString($0.price) } ?? "—").font(TickerTypography.font(11)).minimumScaleFactor(0.85).foregroundStyle(.secondary)
                     }
                 }.frame(width: 100, alignment: .trailing)
@@ -205,6 +213,7 @@ struct SearchView: View {
                 Text(store.t("China")).tag("cn")
                 Text(store.t("HK stocks")).tag("hk")
                 Text(store.t("Crypto")).tag("crypto")
+                Text(store.t("Metals")).tag("metals")
             }.pickerStyle(.segmented).labelsHidden()
             if let error {
                 Label(store.t("Search failed"), systemImage: "wifi.exclamationmark").foregroundStyle(.orange)
@@ -226,7 +235,7 @@ struct SearchView: View {
                                         Text(asset.displayCode).font(TickerTypography.font(12, bold: true))
                                         Text(asset.exchange + " · " + store.t(asset.instrumentKind.title)).font(.caption2).foregroundStyle(.secondary)
                                     }
-                                    Text(asset.displayName).font(.caption).foregroundStyle(.secondary)
+                                    Text(store.t(asset.displayName)).font(.caption).foregroundStyle(.secondary)
                                 }
                                 Spacer()
                                 let added = store.assets.contains(where: { $0.id == asset.id })
@@ -273,7 +282,7 @@ struct DetailView: View {
             if let quote {
                 HStack(alignment: .firstTextBaseline, spacing: 10) {
                     Text(priceString(quote.price)).font(TickerTypography.font(34))
-                    Text(quote.currency).font(TickerTypography.font(12)).foregroundStyle(.secondary)
+                    Text(asset.market == .metals ? asset.priceUnit : quote.currency).font(TickerTypography.font(12)).foregroundStyle(.secondary)
                     Spacer()
                     Text(quote.percent.map { signed($0) + "%" } ?? "—").font(TickerTypography.font(18, bold: true)).foregroundStyle(quoteColor(quote, redUp: store.preferences.redUp))
                 }

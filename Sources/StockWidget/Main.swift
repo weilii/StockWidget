@@ -110,8 +110,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
     private func fitWindowToContent() {
         guard window.attachedSheet == nil else { return }
         var frame = window.frame
-        let height = min(CompactLayout.height(for: store.assets.count), (window.screen ?? NSScreen.main)?.visibleFrame.height ?? 600)
-        frame.origin.y = frame.maxY - height
+        let visibleFrame = (window.screen ?? NSScreen.main)?.visibleFrame
+        let height = min(CompactLayout.height(for: store.assets.count), visibleFrame?.height ?? 600)
+        let top = min(frame.maxY, visibleFrame?.maxY ?? frame.maxY)
+        frame.origin.y = max(top - height, visibleFrame?.minY ?? top - height)
         frame.size = NSSize(width: compactWidth, height: height)
         window.setFrame(frame, display: true)
         ensureOnScreen()
@@ -231,10 +233,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate {
                 store.showingSearch = true
                 try? await Task.sleep(nanoseconds: 500_000_000)
                 storeChecksPassed = storeChecksPassed && window.attachedSheet != nil
+                let added = (store.assets.count..<9).map { Asset(market: .us, symbol: "TEST\($0)", name: "Smoke test") }
+                for asset in added { store.add(asset) }
                 store.showingSearch = false
                 try? await Task.sleep(nanoseconds: 600_000_000)
-                fitWindowToContent()
-                storeChecksPassed = storeChecksPassed && window.frame.width == compactWidth && window.frame.height <= CompactLayout.height(for: store.assets.count) + 1
+                let expectedHeight = min(CompactLayout.height(for: 9), window.screen?.visibleFrame.height ?? 600)
+                storeChecksPassed = storeChecksPassed && window.frame.width == compactWidth && abs(window.frame.height - expectedHeight) <= 1
+                for asset in added { store.remove(asset) }
+                let restoredHeight = min(CompactLayout.height(for: store.assets.count), window.screen?.visibleFrame.height ?? 600)
+                storeChecksPassed = storeChecksPassed && abs(window.frame.height - restoredHeight) <= 1
                 print("COMPACT_SMOKE pass=\(storeChecksPassed) size=\(Int(window.frame.width))x\(Int(window.frame.height))")
             }
             if args.contains("--exercise-desktop") {

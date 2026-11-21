@@ -1,17 +1,17 @@
 import Foundation
 
 public enum Market: String, Codable, CaseIterable, Sendable {
-    case us, cn, hk, crypto
-    public var label: String { [Self.us: "US", .cn: "CN", .hk: "HK", .crypto: "CRYPTO"][self]! }
-    public var currency: String { [Self.us: "USD", .cn: "CNY", .hk: "HKD", .crypto: "USD"][self]! }
+    case us, cn, hk, crypto, metals
+    public var label: String { [Self.us: "US", .cn: "CN", .hk: "HK", .crypto: "CRYPTO", .metals: "METALS"][self]! }
+    public var currency: String { [Self.us: "USD", .cn: "CNY", .hk: "HKD", .crypto: "USD", .metals: "USD"][self]! }
     public var timeZone: TimeZone {
         TimeZone(identifier: self == .us ? "America/New_York" : "Asia/Shanghai")!
     }
 }
 
 public enum InstrumentKind: String, Codable, Sendable {
-    case stock, index, crypto
-    public var title: String { switch self { case .stock: return "Stock"; case .index: return "Index"; case .crypto: return "Crypto" } }
+    case stock, index, crypto, metal
+    public var title: String { switch self { case .stock: return "Stock"; case .index: return "Index"; case .crypto: return "Crypto"; case .metal: return "Precious metal" } }
 }
 
 public struct Asset: Identifiable, Codable, Equatable, Hashable, Sendable {
@@ -22,13 +22,14 @@ public struct Asset: Identifiable, Codable, Equatable, Hashable, Sendable {
     public var kind: InstrumentKind?
     public var id: String { "\(market.rawValue):\(lookup)" }
     public var instrumentKind: InstrumentKind { kind ?? (market == .crypto ? .crypto : .stock) }
-    public var priceUnit: String { instrumentKind == .index ? "PTS" : market.currency }
+    public var priceUnit: String { instrumentKind == .index ? "PTS" : (market == .metals ? "USD/oz" : market.currency) }
     public var exchange: String {
         switch market {
         case .cn: return lookup.hasPrefix("sh") ? "SSE" : (lookup.hasPrefix("sz") ? "SZSE" : "CN")
         case .hk: return "HKEX"
         case .us: return "US"
         case .crypto: return "CRYPTO"
+        case .metals: return "METALS"
         }
     }
     public var displayCode: String {
@@ -153,6 +154,7 @@ public enum TradingHours {
     // Weekday/session estimate only. A feed timestamp remains visible; this is not an exchange holiday calendar.
     public static func estimated(_ market: Market, at date: Date = Date()) -> SessionState {
         if market == .crypto { return .open }
+        if market == .metals { return .unknown }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = market.timeZone
         let weekday = calendar.component(.weekday, from: date)
         if weekday == 1 || weekday == 7 { return .closed }
@@ -166,10 +168,11 @@ public enum TradingHours {
             if (570..<720).contains(minute) || (780..<960).contains(minute) { return .open }
             return (720..<780).contains(minute) ? .breakTime : .closed
         case .crypto: return .open
+        case .metals: return .unknown
         }
     }
     public static func nextOpen(_ market: Market, after date: Date) -> Date? {
-        guard market != .crypto else { return nil }
+        guard market != .crypto && market != .metals else { return nil }
         var calendar = Calendar(identifier: .gregorian); calendar.timeZone = market.timeZone
         let starts = market == .us ? [570] : [570, 780]
         for offset in 0...7 {
